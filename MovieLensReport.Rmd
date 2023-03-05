@@ -1,0 +1,311 @@
+---
+editor_options:
+  markdown:
+    wrap: 72
+output: pdf_document
+---
+
+**Introduction**
+
+Many streaming platforms, including Netflix, use a movie recommendation
+system. The recommendation systems are based on movie ratings given by
+viewers. This report builds a movie recommendation system using a data
+set that includes over 10,000 movies and almost 70,000 users who rated
+those movies. The ratings are out of 5 where 5 is the best and 0.5 is
+the worst. Based on those ratings a model is built to recommend movies.
+Before modeling, the data is imported, cleaned, and organized so that it
+is usable. The data is then split into a training set that is held in
+the object edx, and a final holdout test set that will only be used to
+evaluate the final model.
+
+First the edx data set is examined to determine a starting point to
+build a recommendation model. Then the edx data set is split into a
+train and a test set. Then a function is created to calculate the
+residual mean squared error (RMSE). The goal RMSE is 0.86490. The first
+model is a random sample. The random sample RMSE is used as a baseline
+to improve on. Then the overall mean of the ratings is used. The overall
+mean is expanded to include the movie effect which uses the average
+rating for each individual movie. Then user effect is added to the
+existing model. The user effect uses the average rating that each user
+assigns. Finally the mean plus movie plus user model is regularized to
+account for the users that rate few movies and the movies with few
+ratings. This final model is used on the final holdout test set to
+determine the final residual mean squared error (RMSE).
+
+**Methods/Analysis**
+
+Using the tidyverse package and the caret package in R, the movielens
+data set is imported. The movielens data set is then organized and
+column names are assigned. The movielens data set is then split into the
+edx data set and the final holdout test set. The final holdout test set
+is not used until the final model is trained.
+
+Before splitting the edx data set into a train set and a test set, it is
+examined to determine the best modeling approach. The edx data set has
+just over 9 million rows, and 6 columns. The rows each represent a
+single rating. The columns are userId, movieId, rating, timestamp,
+title, and genres. Each user has a unique userId and each movie has a
+unique movieId. All of these columns can be used to create a
+recommendation model. However, I decided to use only the userId, the
+movieId, the rating, and the title columns because this approach is the
+most simple.
+
+The most common rating is 4 closely followed by 3. I used a graph of the
+ratings to visualize their distribution.
+
+```{r}
+edx %>% group_by(rating) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(rating, count)) +
+  geom_line() +
+  geom_point()
+```
+
+![](ratingVratingCount.png)
+
+I used a histogram to visualize how many ratings each movie received.
+
+```{r echo=TRUE, paged.print=TRUE}
+edx %>% group_by(movieId) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(count)) +
+  geom_histogram(color = "white") +
+  scale_x_log10() +
+  ggtitle("Number of movies v. number of ratings per movie") +
+  xlab("Number of ratings") +
+  ylab("Number of movies")
+```
+
+I used another histogram to visualize the amount of times each user
+rated a movie.
+
+```{r echo=TRUE}
+edx %>% group_by(userId) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(count)) +
+  geom_histogram(color = "white") +
+  scale_x_log10() +
+  ggtitle("Number of users v. number of ratings per user") +
+  xlab("Number of ratings") +
+  ylab("Number of users")
+```
+
+The movies with the most ratings are popular movies such as Pulp
+Fiction, Forrest Gump, and Jurassic Park. I used the following code to
+view the top 10 most rated movies.
+
+```{r echo=TRUE}
+num_ratings <- edx %>% 
+   group_by(movieId) %>%
+   summarize(num_ratings = n(), movieTitle = first(title)) %>%
+   arrange(desc(num_ratings)) %>%
+   top_n(10, num_ratings)
+  num_ratings
+```
+
+The most highly rated movies are not popular movies. This is because
+niche films are reviewed by few people and so the sample size of ratings
+is too small to be reliable. I used the following code to view the best
+rated movies.
+
+```{r echo=TRUE}
+best_rating <- edx %>%
+  group_by(movieId) %>%
+  filter(mean(rating) == 5) %>%
+  select(movieId, rating, title)
+head(best_rating)
+```
+
+Before modeling the data is split into a train and a test set. Then a
+function is created to calculate the residual mean squared error (RMSE).
+The residual mean squared error represents the average error of a given
+model. The smaller the average error, the better the recommendation
+system works. When the RMSE function is applied to a model it produces
+the average error of that model. The goal is to create a model that
+shrinks that error to 0.86490.
+
+```{r}
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+To create a baseline RMSE to improve upon I created a random sample
+using a Monte Carlo simulation and the frequency with which each rating
+occurs. The random sample produced an RMSE of 1.500844. To improve on
+this RMSE I started with an overall average model.
+
+```{r}
+p <- function(x, y) mean(y == x)
+rating <- seq(0.5, 5, 0.5)
+
+B <- 10000
+M <- replicate(B, {
+  s <- sample(train_set$rating, 100, replace = TRUE)
+  sapply(rating, p, y = s)
+})
+prob <- sapply(1:nrow(M), function(x) mean(M[x,]))
+
+y_hat_random <- sample(rating, size = nrow(test_set),
+                       replace = TRUE, prob = prob)
+result_random <- RMSE(test_set$rating, y_hat_random)
+result_random
+```
+
+While examining the data I noticed that most of the ratings are between
+3 and 4. The overall average rating among all the users and movies is
+3.512205. So I used the overall average rating to create a model. The
+average model assumes that all the ratings are the overall average. The
+object mu holds the overall average rating. The RMSE from this model is
+1.060296.
+
+```{r}
+mu <- mean(train_set$rating)
+mu
+
+result_mu <- RMSE(test_set$rating, mu)
+result_mu
+```
+
+To improve on this model the movie effect is added. The movie effect
+uses the average rating that each individual movie received. The movie
+effect is calculated by subtracting the overall mean from the mean
+rating for each movie and then taking the average of that equation. The
+object bi is the movie effect. The object y_hat_bi holds the original
+mean model plus the movie effects tested against the test set. The RMSE
+from the mean + movie effects model is 0.9441517.
+
+```{r}
+bi <- train_set %>%
+  group_by(movieId) %>%
+  summarize(b_i = mean(rating - mu))
+
+y_hat_bi <- mu + test_set %>%
+  left_join(bi, by = "movieId") %>%
+  .$b_i
+
+result_mu_bi <- RMSE(test_set$rating, y_hat_bi)
+result_mu_bi
+
+```
+
+Because the RMSE is not yet at the target 0.86490, it is improved by
+including the user effect. The user effect takes the average rating that
+each user gives into account. The user effect is calculated by taking
+the mean of the average rating that each user gave minus the overall
+average minus the movie effect. This is then added to the model. The
+object bu holds the user effect. The object y_hat_bi_bu holds the mean
+plus movie effect plus user effect model. The RMSE of the mean, plus the
+movie effect, plus the user effect model is 0.8664269.
+
+```{r}
+bu <- train_set %>%
+  left_join(bi, by = "movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = mean(rating - mu - b_i))
+
+y_hat_bi_bu <- test_set %>%
+  left_join(bi, by = "movieId") %>%
+  left_join(bu, by = "userId") %>%
+  mutate(pred = mu + b_i + b_u) %>%
+  .$pred
+
+result_mu_bi_bu <- RMSE(test_set$rating, y_hat_bi_bu)
+result_mu_bi_bu
+
+```
+
+The RMSE is still not at the desired 0.86490 so the whole model is
+regularized. While examining the data I noticed that the most rated
+movies are popular, well known movies, while the movies with the best
+ratings are less known, niche movies. This occurs because some users
+rate few movies and some movies have few ratings. To take this into
+account I regularized the mean plus movie effect plus user effect model.
+To regularize the model a function is created that divides the movie
+effect and the user effect by the number of ratings per movie or user
+respectively plus a variable lambda. The more ratings a movie has or the
+more movies a user rates the more regularization will not effect the
+model. Regularization gives less weight to movies with few ratings and
+the users that rated few movies. One specific value of lambda will
+result in the lowest RMSE. The function tries out values of lambda that
+range from 0 to 10 at intervals of 0.25. As shown in the graph, the most
+effective lambda is 5.
+
+```{r}
+tibble(Lambda = lambdas, RMSE = rmses) %>%
+  ggplot(aes(x = Lambda, y = RMSE)) +
+  geom_point()
+
+```
+
+This lambda is used to regularize the model. The regularized model has
+an RMSE of 0.865679. The code below creates a regularized model using
+the lambda 5.
+
+```{r}
+mu <- mean(train_set$rating)
+
+reg_bi <- train_set %>%
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mu)/(n() + lambda))
+
+reg_bu <- train_set %>%
+  left_join(reg_bi, by = "movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = sum(rating - b_i - mu)/(n() + lambda))
+
+y_hat_reg <- test_set %>%
+  left_join(reg_bi, by = "movieId") %>%
+  left_join(reg_bu, by = "userId") %>%
+  mutate(pred = mu + b_i + b_u) %>%
+  pull(pred)
+
+result_reg <- RMSE(test_set$rating, y_hat_reg)
+result_reg
+```
+
+**Results**
+
+Finally the regularized model is tested against the final holdout test.
+The final RMSE is 0.8648178 which, when rounded is slightly less than
+the desired 0.86490.
+
+```{r}
+mu_final <- mean(edx$rating)
+
+bi_final <- edx %>%
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mu)/(n() + lambda))
+
+bu_final <- edx %>%
+  left_join(bi_final, by = "movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = sum(rating - b_i - mu)/(n() + lambda))
+
+final_y_hat_reg <- final_holdout_test %>%
+  left_join(bi_final, by = "movieId") %>%
+  left_join(bu_final, by = "userId") %>%
+  mutate(pred = mu + b_i + b_u) %>%
+  pull(pred)
+
+final_result <- RMSE(final_holdout_test$rating, final_y_hat_reg)
+final_result
+
+```
+
+**Conclusion**
+
+After examining the data, producing a random sample, and using the
+average model, the movie effects model, and the user effects model, it
+is clear that the overall average rating, the movie effect, and the user
+effect must be used together in order to create a viable model. However,
+this model does not result in a low enough RMSE. I used regularization
+to improve this model. There are more possible methods that could lower
+the RMSE further. This model could be improved using genres and time
+stamps. Movies that came out around the 1990's have the most ratings
+because they have been out for long enough to be rated a lot and they
+came out after movies were consistently rated. Genres also have distinct
+rating patterns. The genre and the time stamp could be used to improve
+the model in the future. Because I reached the desired RMSE without
+using these methods I stopped at a regularized model that uses the movie
+effect, the user effect, and the average overall rating.
